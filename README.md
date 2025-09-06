@@ -7,7 +7,6 @@ A beginner-friendly end-to-end ML project that predicts hyperlocal delivery time
 
 ## Demo
 - Live app (Streamlit): **`https://hyperlocal-delivery-time-fpdcyq262wbhbipcxu9yxc.streamlit.app/`**  
-  _Replace with your actual Streamlit app URL after deployment._
 
 
 ---
