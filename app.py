@@ -3,17 +3,21 @@ import streamlit as st
 import joblib
 import pandas as pd
 import os
-import traceback
 import logging
+import traceback
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 
+# Set up logging (goes to Streamlit Cloud logs)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 st.set_page_config(page_title="Hyperlocal Delivery Time Predictor", page_icon="🚚", layout="centered")
 st.title("🚚 Hyperlocal Delivery Time Predictor")
-st.write("Enter details and click **Predict**. If model file can't be loaded, app will train a model automatically (one-time).")
+st.write("Enter details and click **Predict**. If necessary, the app will train a model automatically (one-time).")
 
 MODEL_PATH = "models/delivery_time_pipeline.joblib"
 DATA_PATH = "data/delivery_data.csv"
@@ -21,7 +25,12 @@ DATA_PATH = "data/delivery_data.csv"
 def build_and_train_pipeline(data_path=DATA_PATH):
     """Build preprocessing + RandomForest pipeline and train it on CSV dataset."""
     st.info("Training model now (this may take ~10-60 seconds). Please wait...")
-    df = pd.read_csv(data_path)
+    try:
+        df = pd.read_csv(data_path)
+    except Exception as e:
+        logger.exception("Could not read dataset")
+        st.error(f"Dataset not found or unreadable at {data_path}. Deployment needs data/delivery_data.csv.")
+        raise
 
     # Basic cleaning
     df = df.dropna()
@@ -33,11 +42,7 @@ def build_and_train_pipeline(data_path=DATA_PATH):
     categorical_features = ["traffic", "weather", "package_size"]
 
     numeric_transformer = StandardScaler()
-    # handle sklearn API change: older versions accept `sparse`, newer use `sparse_output`
-    try:
-        categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse=False)
-    except TypeError:
-        categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse=False)
 
     preprocessor = ColumnTransformer(
         transformers=[
@@ -51,38 +56,41 @@ def build_and_train_pipeline(data_path=DATA_PATH):
 
     pipeline.fit(X, y)
 
-    # Try saving the trained pipeline (optional). Ignore errors while saving.
+    # Try saving the trained pipeline (optional). If it fails, log but continue.
     try:
         os.makedirs("models", exist_ok=True)
         joblib.dump(pipeline, MODEL_PATH)
-        st.success("Trained model saved to models/ directory.")
-    except Exception as e:
-        st.warning(f"Could not save model to disk (not critical). Error: {e}")
+        logger.info("Trained model saved to %s", MODEL_PATH)
+        st.success("Model trained and saved.")
+    except Exception:
+        logger.exception("Failed to save trained model to disk; continuing with in-memory model")
+        st.info("Model trained (not saved).")
 
     return pipeline
 
 @st.cache_resource
 def load_pipeline():
-    """Try to load pipeline, if fails then build & train one."""
-    # 1) Try to load saved model
+    """Try to load pipeline; if fails, train a new one. Fail quietly for users, log details for devs."""
     if os.path.exists(MODEL_PATH):
         try:
             pipeline = joblib.load(MODEL_PATH)
+            logger.info("Loaded pipeline from %s", MODEL_PATH)
             return pipeline
-        except Exception as e:
-            # Loading failed — fall through and train
-            st.warning("Saved model exists but could not be loaded due to environment mismatch. We'll train a new model now.")
-            # Print traceback to logs (not the user)
-            st.text("Loading error (logged).")
-            logging.error(traceback.format_exc())
+        except Exception:
+            # Log full traceback for devs; show a friendly info for users.
+            logger.exception("Failed to load existing model; rebuilding from data.")
+            st.info("Existing model is incompatible with this environment; the app will build a new model now.")
+            # fall through to train
 
-    # 2) If no model or loading failed, train a new one
+    # No model or failed to load -> build & train
     if not os.path.exists(DATA_PATH):
-        st.error(f"Dataset not found at {DATA_PATH}. The app needs the CSV (data/delivery_data.csv).")
+        logger.error("Dataset missing: %s", DATA_PATH)
+        st.error(f"Dataset not found at {DATA_PATH}. Please include data/delivery_data.csv in the repo.")
         raise FileNotFoundError(f"Missing dataset: {DATA_PATH}")
+
     return build_and_train_pipeline(DATA_PATH)
 
-# Load or train pipeline
+# Load or build pipeline
 pipeline = load_pipeline()
 
 # --- UI Inputs ---
@@ -110,6 +118,6 @@ if st.button("Predict delivery time"):
         pred = pipeline.predict(input_df)[0]
         st.success(f"Estimated delivery time: **{pred:.1f} minutes**")
         st.write("This is a model estimate. Real-world times will vary.")
-    except Exception as e:
-        st.error("Prediction failed. See logs.")
-    logging.exception("Prediction error")
+    except Exception:
+        logger.exception("Prediction failed")
+        st.error("Prediction failed. See logs for details.")
