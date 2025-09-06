@@ -11,7 +11,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 
-# Set up logging (goes to Streamlit Cloud logs)
+# Logging for server logs (Streamlit Cloud)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,24 @@ st.write("Enter details and click **Predict**. If necessary, the app will train 
 MODEL_PATH = "models/delivery_time_pipeline.joblib"
 DATA_PATH = "data/delivery_data.csv"
 
+def make_onehot_encoder_compatible(**kwargs):
+    """
+    Return a OneHotEncoder that works with the sklearn version on this environment.
+    Newer sklearn uses sparse_output=False, older uses sparse=False. We try both.
+    """
+    try:
+        # try the newer arg name first (sklearn >= 1.2)
+        return OneHotEncoder(handle_unknown=kwargs.get("handle_unknown", "ignore"), sparse_output=kwargs.get("sparse_output", False))
+    except TypeError:
+        # fall back to older arg name
+        return OneHotEncoder(handle_unknown=kwargs.get("handle_unknown", "ignore"), sparse=kwargs.get("sparse", False))
+
 def build_and_train_pipeline(data_path=DATA_PATH):
     """Build preprocessing + RandomForest pipeline and train it on CSV dataset."""
     st.info("Training model now (this may take ~10-60 seconds). Please wait...")
     try:
         df = pd.read_csv(data_path)
-    except Exception as e:
+    except Exception:
         logger.exception("Could not read dataset")
         st.error(f"Dataset not found or unreadable at {data_path}. Deployment needs data/delivery_data.csv.")
         raise
@@ -42,16 +54,23 @@ def build_and_train_pipeline(data_path=DATA_PATH):
     categorical_features = ["traffic", "weather", "package_size"]
 
     numeric_transformer = StandardScaler()
-    categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse=False)
+    # Create OneHotEncoder in a way that works across sklearn versions
+    try:
+        categorical_transformer = make_onehot_encoder_compatible(handle_unknown="ignore", sparse_output=False, sparse=False)
+    except Exception:
+        # If something unexpected happens, fall back to a safe default and log
+        logger.exception("Failed to create OneHotEncoder with either parameter name; trying minimal fallback.")
+        categorical_transformer = OneHotEncoder(handle_unknown="ignore", sparse=False)
 
     preprocessor = ColumnTransformer(
         transformers=[
             ("num", numeric_transformer, numeric_features),
             ("cat", categorical_transformer, categorical_features),
-        ]
+        ],
+        remainder="drop",
     )
 
-    model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
     pipeline = Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
 
     pipeline.fit(X, y)
@@ -80,7 +99,6 @@ def load_pipeline():
             # Log full traceback for devs; show a friendly info for users.
             logger.exception("Failed to load existing model; rebuilding from data.")
             st.info("Existing model is incompatible with this environment; the app will build a new model now.")
-            # fall through to train
 
     # No model or failed to load -> build & train
     if not os.path.exists(DATA_PATH):
@@ -120,4 +138,4 @@ if st.button("Predict delivery time"):
         st.write("This is a model estimate. Real-world times will vary.")
     except Exception:
         logger.exception("Prediction failed")
-        st.error("Prediction failed. See logs for details.")
+        st.error("Prediction failed. See server logs for details.")
