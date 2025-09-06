@@ -13,6 +13,7 @@ A beginner-friendly end-to-end ML project that predicts hyperlocal delivery time
 ---
 
 ## What this project contains
+
 HyperlocalDeliveryTime/
 ├─ data/ # synthetic dataset (CSV)
 │ └─ delivery_data.csv
