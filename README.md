@@ -64,3 +64,15 @@ python src/train_model.py
 # 6) Run the Streamlit app locally
 streamlit run app.py
 
+## Notes
+This project is beginner-friendly and good for interviews. For production, collect real delivery logs and add monitoring.
+
+## License
+This project is released under the MIT License — feel free to reuse and adapt.
+
+## How to cite / contact
+
+Author: Arshad Murtaza
+GitHub: https://github.com/arshadmurtaza03/hyperlocal-delivery-time.git
+Email: arshadmurtaza2016@gmail.com
+
